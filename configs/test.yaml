@@ -1,0 +1,59 @@
+include: [model.yaml,trainer.yaml]
+
+infer:
+  experiment_name: bio2token
+  run_id: bio2token_pretrained
+  checkpoint_dir: checkpoints
+  checkpoint_type: best
+  checkpoint_monitor: val_loss_epoch
+  checkpoint_mode: min
+  results_dir: results
+  keys_to_save:
+    - all_atom_coords
+    - structure
+    - encoding
+    - indices
+  keys_to_summarize:
+    - structure_rmsd
+    - distance_inter_atom_intra_residue
+    - structure_rmsd_bb
+    - structure_rmsd_sc
+    - structure_tm_cref
+    - loss
+
+data:
+  ds_name: rna3db
+  batch_size_per_gpu: 8
+  num_workers: 4
+  is_train: false
+  dataset:
+    casp14:
+      test_split: casp14
+      max_length: 4096
+      randomly_rotate: false
+    casp15:
+      test_split: casp15
+      max_length: 4096
+      randomly_rotate: false
+    cath:
+      test_split: test
+      max_length: 4096
+      randomly_rotate: false
+    rna3db:
+      test_split: test_set
+      max_length: 4096
+      randomly_rotate: false
+    nabladft:
+      test_split: test_full_conformer
+      randomly_rotate: false
+
+collate_fn:
+  sequences_to_pad:
+    structure: 0
+    eos_pad_mask: 1
+    structure_known_all_atom_mask: 0
+    bb_atom_known_structure_mask: 0
+    sc_atom_known_structure_mask: 0
+    cref_atom_known_structure_mask: 0
+    residue_ids: -1
+  pad_to_multiple_of: 1

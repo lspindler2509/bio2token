@@ -1,0 +1,32 @@
+lightning_trainer:
+  enable_progress_bar: True
+  limit_train_batches: 500 # epoch_train_samples // batch_size_per_gpu
+  limit_val_batches: 50 # epoch_val_samples // batch_size_per_gpu
+  log_every_n_steps: 1 # tb_log_frequency
+  num_sanity_val_steps: 0 # sanity_val_steps
+  max_epochs: 2000 # n_epochs
+  enable_checkpointing: true
+  precision: 32-true
+  # strategy: ddp_find_unused_parameters_true
+  accelerator: gpu
+  devices: 1 # num of gpus
+  num_nodes: 1 # num of nodes
+  
+optimizer:
+  optimizer: adam
+  lr: 3e-4
+  weight_decay: 0.0
+  schedule: poly
+  schedule_args:
+    power: 3
+    total_iters: 500000
+  continue_training: false
+  checkpointing:
+    checkpoint_dir: checkpoints
+    checkpoint_monitor: val_loss_epoch
+    checkpoint_mode: min
+
+mlflow:
+  experiment_name: bio2token
+  tracking_server_host: 127.0.0.1 # "mlflow server --host 127.0.0.1 --port 8080"
+  tracking_server_port: 8080

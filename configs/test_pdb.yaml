@@ -1,0 +1,25 @@
+include: [model.yaml,trainer.yaml]
+
+infer:
+  experiment_name: bio2token
+  run_id: bio2token_pretrained
+  checkpoint_dir: checkpoints
+  checkpoint_type: best
+  checkpoint_monitor: val_loss_epoch
+  checkpoint_mode: min
+  results_dir: results/pdbs/107l
+  keys_to_save:
+    - all_atom_coords
+    - structure
+    - encoding
+    - indices
+  keys_to_summarize:
+    - structure_rmsd
+    - distance_inter_atom_intra_residue
+    - structure_rmsd_bb
+    - structure_rmsd_sc
+    - structure_tm_cref
+    - loss
+
+data:
+  pdb_path: examples/pdbs/107l.pdb

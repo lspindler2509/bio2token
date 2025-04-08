@@ -1,0 +1,32 @@
+data:
+  ds_name: [cath, nabladft, rna3db]
+  ds_name_val: cath
+  batch_size_per_gpu: 8
+  batch_size_per_gpu_val: 8
+  num_workers: 4
+  dataset:
+    cath:
+      train_split: train
+      val_split: validation
+      max_length: 4096
+    alphafoldDB:
+      max_length: 4096
+      max_data: 1000
+    nabladft:
+      train_split: train_100k
+      max_data: 10000
+    rna3db:
+      train_split: train_set
+      max_length: 4096
+      max_data: 10000
+
+collate_fn:
+  sequences_to_pad:
+    structure: 0
+    eos_pad_mask: 1
+    structure_known_all_atom_mask: 0
+    bb_atom_known_structure_mask: 0
+    sc_atom_known_structure_mask: 0
+    cref_atom_known_structure_mask: 0
+    residue_ids: -1
+  pad_to_multiple_of: 1
