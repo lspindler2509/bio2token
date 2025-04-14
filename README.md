@@ -49,7 +49,7 @@ The autoencoder consists of Mamba layers and a FSQ quantizer layer. The model im
 
 ## Datasets
 
-We provide pre-processed datasets in the `data/` folder, including:
+We provide pre-processed datasets for download from [zenodo](https://zenodo.org/records/15199953). Unzip the directory into the highest level of the repo: `bio2token/data`. The `data/` folder contains:
 
 - [CATH dataset](http://download.cathdb.info/cath/releases/all-releases/v4_3_0/non-redundant-data-sets/)
 - [CASP 14](https://predictioncenter.org/casp14/targetlist.cgi) and [15 datasets](https://predictioncenter.org/casp15/targetlist.cgi) (testing only)
@@ -124,4 +124,4 @@ Results are saved under `results/pdb/${pdb_id}/${run_id}/${checkpoint_name}/`. T
 
 ## License
 
-This project is licensed under the MIT license. See [LICENSE](LICENSE.txt) for more details.
+This project code is licensed under the MIT license. See [LICENSE](LICENSE.txt) for more details. The dataset licenses are specified on the the download page. 
