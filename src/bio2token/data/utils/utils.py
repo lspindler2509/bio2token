@@ -292,17 +292,22 @@ def uniform_dataframe(seq, res_types, atom_coords, atom_names, res_atom_start, r
     # Calculate the barycenter of the structure.
     barycenter = np.mean(structure[~unknown_structure], axis=0)
     structure[~unknown_structure] = structure[~unknown_structure] - barycenter
+    ca_indices = np.where(mask_c_ref)[0]
 
     # Return the structured coordinates as numpy arrays.
-    return structure, unknown_structure, residue_name, residue_ids, token_class, atom_names_reordered
+    return structure, unknown_structure, residue_name, residue_ids, token_class, atom_names_reordered, ca_indices
 
+
+from typing import List
+from Bio.PDB import PDBParser
+import numpy as np
+import os
 
 def pdb_2_dict(pdb_path: str, chains: List[str] = None):
-    parser = PDBParser()
+    parser = PDBParser(QUIET=True)
     pdb_ids = []
     pdb_id = os.path.basename(pdb_path).split(".")[0]
     structure = parser.get_structure(pdb_id, pdb_path)
-    seq = ""
     coords = []
     atom_names = []
     atom_types = []
@@ -314,63 +319,89 @@ def pdb_2_dict(pdb_path: str, chains: List[str] = None):
     res_atom_start = []
     res_atom_end = []
     full_res_names = []
-    # if no chains are provided we read in everything
+    fasta_seqs = {}  # <- neue Struktur für FASTA-Ausgabe
+
+    # Ableitung: AF-ID + TED-Domains
+    parts = pdb_id.split("_")
+    afid = parts[1]
+    domains = parts[2].replace("TED", "").split("-")
+
     if chains is None:
         chains = [chain.id for chain in structure.get_chains()]
     print(f"PDB loading. Chains: {chains}")
+
     continuous_res_id = 0
     continuous_atom_id = 0
+
+    chain_idx = 0  # um Domain-IDs mit Chains zu verbinden
+
     for chain in structure.get_chains():
         if chain.id not in chains:
-            pass
-        else:
-            res_id = 0
-            for residue in chain:
-                resname = residue.get_resname()
-                if len(resname) == 3:
-                    ABBRS_REVERSED = AA_ABRV_REVERSED
-                    res_type = "aa"
-                else:
-                    ABBRS_REVERSED = RNA_ABRV_REVERSED
-                    res_type = "rna"
-                if resname not in ABBRS_REVERSED:
-                    pass
-                else:
-                    res = ABBRS_REVERSED[resname]
-                    seq += res
-                    res_atom_start.append(continuous_atom_id)
-                    res_types.append(res_type)
-                    for atom in residue:
-                        atom_name = atom.get_name()
-                        if atom_name[0] == "H":
-                            pass
-                        else:
-                            atom_names.append(atom.get_name())
-                            atom_types.append(atom.get_name()[0])
-                            chain_ids.append(chain.id)
-                            pdb_ids.append(pdb_id)
-                            coords.append(np.array(atom.get_coord()))
-                            res_names.append(res)
-                            full_res_names.append(resname)
-                            res_ids.append(res_id)
-                            continuous_res_ids.append(continuous_res_id)
+            continue
 
-                            continuous_atom_id += 1
-                            res_id += 1
-                    res_atom_end.append(continuous_atom_id)
-                    continuous_res_id += 1
+        seq = ""
+        res_atom_start_chain = []
+        res_atom_end_chain = []
+
+        for residue in chain:
+            resname = residue.get_resname()
+            if len(resname) == 3:
+                ABBRS_REVERSED = AA_ABRV_REVERSED
+                res_type = "aa"
+            else:
+                ABBRS_REVERSED = RNA_ABRV_REVERSED
+                res_type = "rna"
+
+            if resname not in ABBRS_REVERSED:
+                continue
+
+            res = ABBRS_REVERSED[resname]
+            seq += res
+            res_atom_start.append(continuous_atom_id)
+            res_atom_start_chain.append(continuous_atom_id)
+            res_types.append(res_type)
+
+            for atom in residue:
+                atom_name = atom.get_name()
+                if atom_name[0] == "H" or atom_name == "OXT":
+                    continue
+                atom_names.append(atom_name)
+                atom_types.append(atom_name[0])
+                chain_ids.append(chain.id)
+                pdb_ids.append(pdb_id)
+                coords.append(np.array(atom.get_coord()))
+                res_names.append(res)
+                full_res_names.append(resname)
+
+                res_ids.append(residue.id[1])
+                continuous_res_ids.append(continuous_res_id)
+
+                continuous_atom_id += 1
+
+            res_atom_end.append(continuous_atom_id)
+            res_atom_end_chain.append(continuous_atom_id)
+            continuous_res_id += 1
+
+        # FASTA speichern pro Chain
+        if chain_idx < len(domains):  # sichere Zuordnung von Chain zu Domain
+            header = f"{afid}_TED{domains[chain_idx]}"
+            fasta_seqs[header] = seq
+        else:
+            print(f"⚠️ Mehr Chains als Domains: {pdb_id}, chain {chain.id} wurde ignoriert.")
+        chain_idx += 1
+
     coords = np.vstack(coords)
     print(f"PDB loading. N residues: {len(res_atom_start)}")
     print(f"PDB loading. N atoms: {len(atom_names)}")
-    # Create DataFrame
+
     pdb_dict = {
         "pdb_id": pdb_ids,
-        "seq": seq,
+        "seq": "".join(fasta_seqs.values()),
         "res_names": res_names,
         "coords_groundtruth": coords,
         "atom_names": atom_names,
         "atom_types": atom_types,
-        "seq_length": len(seq),
+        "seq_length": len("".join(fasta_seqs.values())),
         "atom_length": len(atom_names),
         "chains": chain_ids,
         "res_ids": res_ids,
@@ -379,23 +410,26 @@ def pdb_2_dict(pdb_path: str, chains: List[str] = None):
         "res_atom_start": res_atom_start,
         "res_atom_end": res_atom_end,
         "full_res_names": full_res_names,
+        "fasta_seqs": fasta_seqs,
     }
 
     return pdb_dict
 
 
-def write_pdb(coords: np.ndarray, atom_types: List[str], residue_types: List[str], residue_ids: List[int], output_path: str):
+def write_pdb(coords: np.ndarray, atom_types: List[str], residue_types: List[str],
+              residue_ids: List[int], chain_ids: List[str], output_path: str):
     """
-    Write protein coordinates to PDB format.
+    Write protein structure to PDB format with correct chain IDs and TER records.
 
     Args:
-        coords: numpy array of shape (N, 3) containing atomic coordinates
-        atom_types: list of length N containing atom names (e.g., 'N', 'CA', 'C', 'O')
-        residue_types: list of length N containing residue names (e.g., 'ALA', 'GLY')
-        residue_ids: list of length N containing residue ids
-        output_path: path to save the PDB file
+        coords: array of shape (N, 3) with atom coordinates
+        atom_types: list of atom names (e.g., 'N', 'CA')
+        residue_types: list of 3-letter residue names (e.g., 'ALA', 'GLY')
+        residue_ids: list of residue sequence numbers (original resseq)
+        chain_ids: list of chain IDs (e.g., 'A', 'B'), one per atom
+        output_path: path to write the PDB file
     """
-    assert len(coords) == len(atom_types) == len(residue_types), "Length mismatch in inputs"
+    assert len(coords) == len(atom_types) == len(residue_types) == len(residue_ids) == len(chain_ids), "Input length mismatch"
     if os.path.exists(output_path):
         os.remove(output_path)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -404,21 +438,32 @@ def write_pdb(coords: np.ndarray, atom_types: List[str], residue_types: List[str
         atom_num = 1
         current_res_num = 1
         prev_res_id = residue_ids[0]
+        prev_chain_id = chain_ids[0]
 
-        for coord, atom, res, res_id in zip(coords, atom_types, residue_types, residue_ids):
-            # Increment residue number when we see a new residue
-            if res_id != prev_res_id:
+        for i in range(len(coords)):
+            coord = coords[i]
+            atom = atom_types[i]
+            res = residue_types[i]
+            res_id = residue_ids[i]
+            chain_id = chain_ids[i]
+
+            if res_id != prev_res_id or chain_id != prev_chain_id:
                 current_res_num += 1
                 prev_res_id = res_id
 
-            # PDB format specification
+            # Write ATOM line
             line = (
-                f"ATOM  {atom_num:5d}  {atom:<3s} {res:3s} A{current_res_num:4d}"
-                f"    {coord[0]:8.3f}{coord[1]:8.3f}{coord[2]:8.3f}"
+                f"ATOM  {atom_num:5d} {atom:^4s}{res:>3s} {chain_id:1s}"
+                f"{res_id:4d}    {coord[0]:8.3f}{coord[1]:8.3f}{coord[2]:8.3f}"
                 f"  1.00  0.00           {atom[0]:>2s}\n"
             )
             f.write(line)
             atom_num += 1
 
-        # Add END marker
-        f.write("END\n")
+            # Check if we reached the end of the current chain
+            is_last_atom = (i == len(coords) - 1)
+            next_chain_id = chain_ids[i + 1] if not is_last_atom else None
+            if not is_last_atom and chain_id != next_chain_id:
+                f.write("TER\n")
+            elif is_last_atom:
+                f.write("END\n")
