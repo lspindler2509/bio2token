@@ -328,7 +328,6 @@ def pdb_2_dict(pdb_path: str, chains: List[str] = None):
 
     if chains is None:
         chains = [chain.id for chain in structure.get_chains()]
-    print(f"PDB loading. Chains: {chains}")
 
     continuous_res_id = 0
     continuous_atom_id = 0
@@ -391,8 +390,6 @@ def pdb_2_dict(pdb_path: str, chains: List[str] = None):
         chain_idx += 1
 
     coords = np.vstack(coords)
-    print(f"PDB loading. N residues: {len(res_atom_start)}")
-    print(f"PDB loading. N atoms: {len(atom_names)}")
 
     pdb_dict = {
         "pdb_id": pdb_ids,

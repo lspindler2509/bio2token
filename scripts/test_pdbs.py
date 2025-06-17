@@ -55,10 +55,6 @@ def process_pdb(pdb_path, global_configs, model, device, ckpt_path_name, data_na
     results_dir = f"{global_configs['infer']['results_dir']}/{global_configs['infer']['run_id']}/{ckpt_path_name}/{chains}/{data_name}/"
     os.makedirs(results_dir, exist_ok=True)
     pdb_basename = os.path.basename(pdb_path).replace(".pdb", "")
-    print(f"Ground truth coordinates count: {len(gt_coords)}")
-    print(f"Reconstructed coordinates count: {len(rec_coords)}")
-    print(f"Atom types count: {len(atom_types)}")
-    print(f"Residue types count: {len(residue_types)}")
     # write_pdb(
     #     gt_coords,
     #     atom_types,
@@ -80,14 +76,12 @@ def process_pdb(pdb_path, global_configs, model, device, ckpt_path_name, data_na
     tokens = batch["indices"].detach().cpu()
     tokens = tokens.flatten()
     #torch.save(tokens, f"{results_dir}/tokens/{pdb_basename}.pt")
-    print(tokens.shape)
     ca_tokens = tokens[ca_indices]
     ca_gt_coords = gt_coords[ca_indices]
     
     tokens_str = ",".join(str(t.item()) for t in ca_tokens)
     coords_str = "#".join(";".join(f"{c:.3f}" for c in coord) for coord in ca_gt_coords)
     
-    print(len(ca_tokens))
     without_prefix = "_".join(pdb_basename.split("_")[1:])
     without_prefix = without_prefix.replace("-", "-TED")
     #torch.save(ca_tokens, f"{results_dir}/tokens/{without_prefix}_ca.pt")
@@ -144,7 +138,6 @@ def main():
                 return
             
             for member in pdb_members:
-                print(f"Processing {member.name}...")
                 extracted_path = os.path.join(tmpdir, os.path.basename(member.name))
                 with tarf.extractfile(member) as pdb_file, open(extracted_path, "wb") as out_file:
                     out_file.write(pdb_file.read())
