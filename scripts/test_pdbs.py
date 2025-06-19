@@ -2,23 +2,13 @@
 from datetime import datetime
 import os
 import argparse
-import tarfile
-import tempfile
 import zipfile
+import io
 from bio2token.models.autoencoder import Autoencoder, AutoencoderConfig
 from bio2token.utils.configs import utilsyaml_to_dict, pi_instantiate
 from bio2token.utils.lightning import find_lowest_val_loss_checkpoint
 from bio2token.data.utils.utils import compute_masks, pdb_2_dict, uniform_dataframe, write_pdb
-from bio2token.data.utils.molecule_conventions import ABBRS
 import torch
-import json
-import glob
-import pdb
-import io
-
-DEBUG = False
-if DEBUG:
-    os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 def process_pdb_batch(pdb_file_objs, pdb_names, global_configs, device):
     # Prepare lists for batch processing
@@ -117,28 +107,26 @@ def main():
     all_fasta_seqs = {}
     label_data = {}
     data_name = os.path.basename(args.pdb_dir).replace(".zip", "")
-    with tarfile.open(args.pdb_dir, "r:gz") as tarf:
+    with zipfile.ZipFile(args.pdb_dir, "r") as zipf:
         print("Before get members!!")
-        pdb_members = [m for m in tarf.getmembers() if m.name.endswith(".pdb")]
-        print(f"Found {len(pdb_members)} .pdb files in tar archive: {args.pdb_dir}")
-        if not pdb_members:
-            print(f"No .pdb files found in tar archive: {args.pdb_dir}")
+        pdb_names_in_zip = [name for name in zipf.namelist() if name.endswith(".pdb")]
+        print(f"Found {len(pdb_names_in_zip)} .pdb files in zip archive: {args.pdb_dir}")
+        if not pdb_names_in_zip:
+            print("❌ No .pdb files found.")
             return
 
-        # Batchwise processing
-        batch_size = args.batch_size
-        for i in range(0, len(pdb_members), batch_size):
-            batch_members = pdb_members[i:i+batch_size]
-            pdb_file_objs = []
-            pdb_names = []
-            for member in batch_members:
-                pdb_bytes = tarf.extractfile(member).read()
-                pdb_str = pdb_bytes.decode("utf-8")  # oder "ascii"
-                pdb_file_objs.append(io.StringIO(pdb_str))
-                pdb_names.append(member.name)
+        for i in range(0, len(pdb_names_in_zip), args.batch_size):
+            batch_names = pdb_names_in_zip[i:i+args.batch_size]
+            pdb_file_objs, pdb_file_names = [], []
+            for name in batch_names:
+                with zipf.open(name) as f:
+                    pdb_str = f.read().decode("utf-8")
+                    pdb_file_objs.append(io.StringIO(pdb_str))
+                    pdb_file_names.append(name)
+
             # Prepare batch
             batch, batch_ca_indices, batch_atom_names_reordered, batch_residue_names, batch_dicts, batch_fasta_dicts, batch_pdb_basenames = process_pdb_batch(
-                pdb_file_objs, pdb_names, global_configs, device
+                pdb_file_objs, pdb_file_names, global_configs, device
             )
             # Inference
             with torch.no_grad():
@@ -170,21 +158,21 @@ def main():
                     "coords": coords_str,
                 }
 
-    fasta_path = os.path.join("/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/group2/bio2token_test/sequences_big.fasta")
+    fasta_path = "/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/group2/bio2token_test/sequences_big.fasta"
     with open(fasta_path, "w") as f:
         for header, seq in all_fasta_seqs.items():
             f.write(f">{header}\n{seq}\n")
     label_path = "/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/group2/bio2token_test/labels_big.fasta"
     with open(label_path, "w") as f:
         for header, data in label_data.items():
-            f.write(f">{header}\n")
-            f.write(f"{data['tokens']}\n")
-            f.write(f"{data['coords']}\n")
-    print(f"FASTA file written to: {fasta_path}")
+            f.write(f">{header}\n{data['tokens']}\n{data['coords']}\n")
+
+    print(f"✅ FASTA written to: {fasta_path}")
+    print(f"✅ Labels written to: {label_path}")
 
 if __name__ == "__main__":
     start = datetime.now()
-    print("Start!!!")
+    print("Start!")
     main()
     end = datetime.now()
-    print(f"Gesamtlaufzeit: {end - start}")
+    print(f"⏱ Gesamtlaufzeit: {end - start}")
