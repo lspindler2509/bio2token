@@ -303,10 +303,10 @@ from Bio.PDB import PDBParser
 import numpy as np
 import os
 
-def pdb_2_dict(pdb_path: str, chains: List[str] = None):
+def pdb_2_dict(pdb_path: str, pdb_filename, chains: List[str] = None):
     parser = PDBParser(QUIET=True)
     pdb_ids = []
-    pdb_id = os.path.basename(pdb_path).split(".")[0]
+    pdb_id = os.path.basename(pdb_filename).split(".")[0]
     structure = parser.get_structure(pdb_id, pdb_path)
     coords = []
     atom_names = []

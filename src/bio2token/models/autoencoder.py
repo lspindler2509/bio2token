@@ -96,14 +96,14 @@ class Autoencoder(nn.Module):
         # Pass data through the encoder to generate encoded representations
         batch = self.encoder(batch)
 
-        # Decode the encoded representations back to the original input space
-        batch = self.decoder(batch)
+        # # Decode the encoded representations back to the original input space
+        # batch = self.decoder(batch)
 
-        # Optionally transform or align data using registration component
-        batch = self.registration(batch)
+        # # Optionally transform or align data using registration component
+        # batch = self.registration(batch)
 
-        # Calculate and apply losses to the batch
-        batch = self.loss(batch)
+        # # Calculate and apply losses to the batch
+        # batch = self.loss(batch)
 
         # Return the processed batch
         return batch

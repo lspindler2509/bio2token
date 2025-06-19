@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from datetime import datetime
 import os
 import argparse
 import tarfile
@@ -13,100 +14,87 @@ import torch
 import json
 import glob
 import pdb
+import io
+
 DEBUG = False
 if DEBUG:
     os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-def process_pdb(pdb_path, global_configs, model, device, ckpt_path_name, data_name):
-    dict = pdb_2_dict(
-        pdb_path,
-        chains=global_configs["data"]["chains"] if "chains" in global_configs["data"] else None,
-    )
-    structure, unknown_structure, residue_name, residue_ids, token_class, atom_names_reordered, ca_indices = uniform_dataframe(
-        dict["seq"],
-        dict["res_types"],
-        dict["coords_groundtruth"],
-        dict["atom_names"],
-        dict["res_atom_start"],
-        dict["res_atom_end"],
-    )
+
+def process_pdb_batch(pdb_file_objs, pdb_names, global_configs, device):
+    # Prepare lists for batch processing
+    batch_structures = []
+    batch_unknown_structures = []
+    batch_residue_ids = []
+    batch_token_class = []
+    batch_ca_indices = []
+    batch_atom_names_reordered = []
+    batch_residue_names = []
+    batch_dicts = []
+    batch_fasta_dicts = []
+    batch_pdb_basenames = []
+
+    for pdb_file_obj, pdb_name in zip(pdb_file_objs, pdb_names):
+        dict = pdb_2_dict(
+            pdb_file_obj,
+            pdb_name,
+            chains=global_configs["data"]["chains"] if "chains" in global_configs["data"] else None,
+        )
+        structure, unknown_structure, residue_name, residue_ids, token_class, atom_names_reordered, ca_indices = uniform_dataframe(
+            dict["seq"],
+            dict["res_types"],
+            dict["coords_groundtruth"],
+            dict["atom_names"],
+            dict["res_atom_start"],
+            dict["res_atom_end"],
+        )
+        batch_structures.append(torch.tensor(structure).float())
+        batch_unknown_structures.append(torch.tensor(unknown_structure).bool())
+        batch_residue_ids.append(torch.tensor(residue_ids).long())
+        batch_token_class.append(torch.tensor(token_class).long())
+        batch_ca_indices.append(ca_indices)
+        batch_atom_names_reordered.append(atom_names_reordered)
+        batch_residue_names.append(residue_name)
+        batch_dicts.append(dict)
+        batch_fasta_dicts.append(dict["fasta_seqs"])
+        batch_pdb_basenames.append(os.path.basename(pdb_name).replace(".pdb", ""))
+
+    # Padding
+    from torch.nn.utils.rnn import pad_sequence
+
+    # Find max length for padding
+    max_len = max([s.shape[0] for s in batch_structures])
+
+    def pad_tensor_list(tensor_list, pad_value=0):
+        return torch.stack([
+            torch.cat([t, torch.full((max_len - t.shape[0],) + t.shape[1:], pad_value, dtype=t.dtype)]) if t.shape[0] < max_len else t
+            for t in tensor_list
+        ])
+
+    structure = pad_tensor_list(batch_structures, pad_value=0)
+    unknown_structure = pad_tensor_list(batch_unknown_structures, pad_value=True)
+    residue_ids = pad_tensor_list(batch_residue_ids, pad_value=0)
+    token_class = pad_tensor_list(batch_token_class, pad_value=0)
+
     batch = {
-        "structure": torch.tensor(structure).float(),
-        "unknown_structure": torch.tensor(unknown_structure).bool(),
-        "residue_ids": torch.tensor(residue_ids).long(),
-        "token_class": torch.tensor(token_class).long(),
+        "structure": structure,
+        "unknown_structure": unknown_structure,
+        "residue_ids": residue_ids,
+        "token_class": token_class,
     }
-    batch = {k: v[~batch["unknown_structure"]] for k, v in batch.items()}
+    # NICHT flatten!
+    # batch = {k: v[~batch["unknown_structure"]] if k != "unknown_structure" else v for k, v in batch.items()}
     batch = compute_masks(batch, structure_track=True)
-    batch = {k: v[None].to(device) for k, v in batch.items()}
-    # Inference
-    batch = model(batch)
-    for k, v in batch["losses"].items():
-        batch[k] = v.item()
-    # Save results
-    gt_coords = batch["structure"][0].detach().cpu().numpy()
-    rec_coords = batch["all_atom_coords"][0].detach().cpu().numpy()
-    atom_types = atom_names_reordered
-    residue_types = [ABBRS[res.split("_")[0]][res.split("_")[1]] for res in residue_name]
-    if "chains" in global_configs["data"] and global_configs["data"]["chains"] is not None:
-        chains = "_".join(global_configs["data"]["chains"])
-    else:
-        print("Using all chains")
-        chains = "all"
-    results_dir = f"{global_configs['infer']['results_dir']}/{global_configs['infer']['run_id']}/{ckpt_path_name}/{chains}/{data_name}/"
-    os.makedirs(results_dir, exist_ok=True)
-    pdb_basename = os.path.basename(pdb_path).replace(".pdb", "")
-    # write_pdb(
-    #     gt_coords,
-    #     atom_types,
-    #     residue_types,
-    #     dict["res_ids"],
-    #     dict["chains"],
-    #     f"{results_dir}/gt_{pdb_basename}.pdb",
-    # )
-    # write_pdb(
-    #     rec_coords,
-    #     atom_types,
-    #     residue_types,
-    #     dict["res_ids"],
-    #     dict["chains"],
-    #     f"{results_dir}/rec_{pdb_basename}.pdb",
-    # )
-    # save only tokens, as .pt
-    os.makedirs(f"{results_dir}/tokens", exist_ok=True)
-    tokens = batch["indices"].detach().cpu()
-    tokens = tokens.flatten()
-    #torch.save(tokens, f"{results_dir}/tokens/{pdb_basename}.pt")
-    ca_tokens = tokens[ca_indices]
-    ca_gt_coords = gt_coords[ca_indices]
-    
-    tokens_str = ",".join(str(t.item()) for t in ca_tokens)
-    coords_str = "#".join(";".join(f"{c:.3f}" for c in coord) for coord in ca_gt_coords)
-    
-    without_prefix = "_".join(pdb_basename.split("_")[1:])
-    without_prefix = without_prefix.replace("-", "-TED")
-    #torch.save(ca_tokens, f"{results_dir}/tokens/{without_prefix}_ca.pt")
-    return dict["fasta_seqs"], tokens_str, coords_str, without_prefix
-'''    # Save tokens
-    test_outputs = {}
-    for k in global_configs["infer"]["keys_to_summarize"] + global_configs["infer"]["keys_to_save"]:
-        if k in batch:
-            v = batch[k]
-            if type(v) == torch.Tensor:
-                if v.ndim > 1:
-                    outputs_list = v[0][batch["eos_pad_mask"][0] == 0].detach().cpu().numpy().tolist()
-                else:
-                    outputs_list = v[0].detach().cpu().item()
-            else:
-                outputs_list = v
-            test_outputs[k] = outputs_list
-    with open(f"{results_dir}/outputs_{pdb_basename}.json", "w") as f:
-        json.dump(test_outputs, f, indent=4)'''
+    batch = {k: v.to(device) for k, v in batch.items()}
+    return batch, batch_ca_indices, batch_atom_names_reordered, batch_residue_names, batch_dicts, batch_fasta_dicts, batch_pdb_basenames
+
 def main():
     # args
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="test_pdb.yaml")
     parser.add_argument("--pdb_dir", type=str, required=False, help="Directory containing .pdb files", default="/Users/lisaspindler/Downloads/casp15.targets.oligo.public_12.20.2022")
+    parser.add_argument("--batch_size", type=int, default=512, help="Batch size for inference")
     args = parser.parse_args()
+    print("Load everything!")
     # Load config yaml file
     global_configs = utilsyaml_to_dict(args.config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -130,37 +118,73 @@ def main():
     label_data = {}
     data_name = os.path.basename(args.pdb_dir).replace(".zip", "")
     with tarfile.open(args.pdb_dir, "r:gz") as tarf:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            pdb_members = [m for m in tarf.getmembers() if m.name.endswith(".pdb")]
-            print(f"Found {len(pdb_members)} .pdb files in tar archive: {args.pdb_dir}")
-            if not pdb_members:
-                print(f"No .pdb files found in tar archive: {args.pdb_dir}")
-                return
-            
-            for member in pdb_members:
-                extracted_path = os.path.join(tmpdir, os.path.basename(member.name))
-                with tarf.extractfile(member) as pdb_file, open(extracted_path, "wb") as out_file:
-                    out_file.write(pdb_file.read())
+        print("Before get members!!")
+        pdb_members = [m for m in tarf.getmembers() if m.name.endswith(".pdb")]
+        print(f"Found {len(pdb_members)} .pdb files in tar archive: {args.pdb_dir}")
+        if not pdb_members:
+            print(f"No .pdb files found in tar archive: {args.pdb_dir}")
+            return
 
-                fasta_dict, tokens_str, coords_str, header = process_pdb(
-                    extracted_path, global_configs, model, device, ckpt_path_name, data_name
-                )
+        # Batchwise processing
+        batch_size = args.batch_size
+        for i in range(0, len(pdb_members), batch_size):
+            batch_members = pdb_members[i:i+batch_size]
+            pdb_file_objs = []
+            pdb_names = []
+            for member in batch_members:
+                pdb_bytes = tarf.extractfile(member).read()
+                pdb_str = pdb_bytes.decode("utf-8")  # oder "ascii"
+                pdb_file_objs.append(io.StringIO(pdb_str))
+                pdb_names.append(member.name)
+            # Prepare batch
+            batch, batch_ca_indices, batch_atom_names_reordered, batch_residue_names, batch_dicts, batch_fasta_dicts, batch_pdb_basenames = process_pdb_batch(
+                pdb_file_objs, pdb_names, global_configs, device
+            )
+            # Inference
+            with torch.no_grad():
+                batch_out = model(batch)
+            # Save results for each pdb in batch
+            for j, pdb_basename in enumerate(batch_pdb_basenames):
+                dict = batch_dicts[j]
+                ca_indices = batch_ca_indices[j]
+                atom_names_reordered = batch_atom_names_reordered[j]
+                residue_name = batch_residue_names[j]
+                fasta_dict = batch_fasta_dicts[j]
+                gt_coords = batch_out["structure"][j].detach().cpu().numpy()
+                tokens = batch_out["indices"][j].detach().cpu().flatten()
+                ca_tokens = tokens[ca_indices]
+                ca_gt_coords = gt_coords[ca_indices]
+                tokens_str = ",".join(str(t.item()) for t in ca_tokens)
+                coords_str = "#".join(";".join(f"{c:.3f}" for c in coord) for coord in ca_gt_coords)
+                if "chains" in global_configs["data"] and global_configs["data"]["chains"] is not None:
+                    chains = "_".join(global_configs["data"]["chains"])
+                else:
+                    print("Using all chains")
+                    chains = "all"
+                results_dir = f"{global_configs['infer']['results_dir']}/{global_configs['infer']['run_id']}/{ckpt_path_name}/{chains}/{data_name}/"
+                os.makedirs(results_dir, exist_ok=True)
+                header = pdb_basename.replace("-", "-TED")
                 all_fasta_seqs.update(fasta_dict)
                 label_data[header] = {
                     "tokens": tokens_str,
                     "coords": coords_str,
                 }
-    fasta_path = os.path.join("/dss/dsshome1/05/ge89maf2/results/bio2token/pdb_interactions_sample/sequences.fasta")
+
+    fasta_path = os.path.join("/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/group2/bio2token_test/sequences_big.fasta")
     with open(fasta_path, "w") as f:
         for header, seq in all_fasta_seqs.items():
             f.write(f">{header}\n{seq}\n")
-    label_path = "/dss/dsshome1/05/ge89maf2/results/bio2token/pdb_interactions_sample/labels.fasta"
+    label_path = "/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/group2/bio2token_test/labels_big.fasta"
     with open(label_path, "w") as f:
         for header, data in label_data.items():
             f.write(f">{header}\n")
             f.write(f"{data['tokens']}\n")
             f.write(f"{data['coords']}\n")
     print(f"FASTA file written to: {fasta_path}")
+
 if __name__ == "__main__":
+    start = datetime.now()
+    print("Start!!!")
     main()
-    #uv run scripts/test_pdbs.py --config test_pdb.yaml --pdb_dir /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/group2/sample_golden_dataset
+    end = datetime.now()
+    print(f"Gesamtlaufzeit: {end - start}")
