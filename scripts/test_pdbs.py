@@ -83,6 +83,7 @@ def main():
     parser.add_argument("--config", type=str, default="test_pdb.yaml")
     parser.add_argument("--pdb_dir", type=str, required=False, help="Directory containing .pdb files", default="/Users/lisaspindler/Downloads/casp15.targets.oligo.public_12.20.2022")
     parser.add_argument("--batch_size", type=int, default=512, help="Batch size for inference")
+    parser.add_argument("--data_dir", type=str, required=True, help="Directory to save output files")
     args = parser.parse_args()
     print("Load everything!")
     # Load config yaml file
@@ -106,7 +107,13 @@ def main():
     model.to(device)
     all_fasta_seqs = {}
     label_data = {}
-    data_name = os.path.basename(args.pdb_dir).replace(".zip", "")
+
+    # Output file name construction
+    input_base = os.path.splitext(os.path.basename(args.pdb_dir))[0]
+    fasta_path = os.path.join(args.data_dir, f"{input_base}_predictions.fasta")
+    label_path = os.path.join(args.data_dir, f"{input_base}_predictions.fasta")
+
+    data_name = input_base
     with zipfile.ZipFile(args.pdb_dir, "r") as zipf:
         print("Before get members!!")
         pdb_names_in_zip = [name for name in zipf.namelist() if name.endswith(".pdb")]
@@ -158,11 +165,10 @@ def main():
                     "coords": coords_str,
                 }
 
-    fasta_path = "/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/group2/bio2token_test/sequences_big.fasta"
+    os.makedirs(args.data_dir, exist_ok=True)
     with open(fasta_path, "w") as f:
         for header, seq in all_fasta_seqs.items():
             f.write(f">{header}\n{seq}\n")
-    label_path = "/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/group2/bio2token_test/labels_big.fasta"
     with open(label_path, "w") as f:
         for header, data in label_data.items():
             f.write(f">{header}\n{data['tokens']}\n{data['coords']}\n")
