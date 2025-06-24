@@ -24,11 +24,23 @@ def process_pdb_batch(pdb_file_objs, pdb_names, global_configs, device):
     batch_pdb_basenames = []
 
     for pdb_file_obj, pdb_name in zip(pdb_file_objs, pdb_names):
-        dict = pdb_2_dict(
-            pdb_file_obj,
-            pdb_name,
-            chains=global_configs["data"]["chains"] if "chains" in global_configs["data"] else None,
-        )
+        try:
+            dict = pdb_2_dict(
+                pdb_file_obj,
+                pdb_name,
+                chains=global_configs["data"]["chains"] if "chains" in global_configs["data"] else None,
+            )
+        except Exception as e:
+            print(f"❌ Error processing {pdb_name}: {e}")
+            pdb_file_obj.seek(0)
+
+            # safe faulty pdb for inspection
+            basename = os.path.basename(pdb_name).replace("/", "_")
+            out_path = os.path.join(failed_dir, basename)
+            with open(out_path, "w") as f:
+                f.write(pdb_file_obj.read())
+            print(f"📝 Saved failed PDB to: {out_path}")
+            continue
         structure, unknown_structure, residue_name, residue_ids, token_class, atom_names_reordered, ca_indices = uniform_dataframe(
             dict["seq"],
             dict["res_types"],
@@ -71,7 +83,7 @@ def process_pdb_batch(pdb_file_objs, pdb_names, global_configs, device):
         "residue_ids": residue_ids,
         "token_class": token_class,
     }
-    # NICHT flatten!
+    # do not flatten!
     # batch = {k: v[~batch["unknown_structure"]] if k != "unknown_structure" else v for k, v in batch.items()}
     batch = compute_masks(batch, structure_track=True)
     batch = {k: v.to(device) for k, v in batch.items()}
@@ -193,6 +205,8 @@ def main():
     print(f"\n✅ Alle ZIPs fertig in {total_end-total_start}")
 
 if __name__ == "__main__":
+    failed_dir = "failed_pdbs"
+    os.makedirs(failed_dir, exist_ok=True)
     start = datetime.now()
     print("Start!")
     main()
